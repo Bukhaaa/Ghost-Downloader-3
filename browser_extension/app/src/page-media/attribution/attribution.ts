@@ -59,18 +59,23 @@ function trySelect(ctx: ResolveContext, findUrlsByIdHint: FindUrlsByIdHint): Res
   }
 }
 
-function toSessionSnapshot(session: VideoSession): SessionSnapshot {
+function toSessionSnapshot(session: VideoSession, durationByUrl: ReadonlyMap<string, number>): SessionSnapshot {
   const attributedUrls: SessionSnapshot["attributedUrls"] = Object.freeze(
     [...session.attributedUrls.entries()].map(([url, meta]) => Object.freeze({
       url,
       contentType: meta.contentType,
       capturedAt: meta.capturedAt,
       isMaster: meta.isMaster,
+      isLockedByMse: meta.lockedByMse,
+      duration: durationByUrl.get(url) ?? 0,
     })),
   );
+  const duration = session.elementRef.deref()?.duration ?? 0;
   return Object.freeze({
     formKind: session.formKind,
     lastBoundAt: session.lastBoundAt,
+    src: session.src,
+    duration: Number.isFinite(duration) ? duration : 0,
     attributedUrls,
   });
 }
@@ -82,6 +87,7 @@ class MediaAttribution {
   private readonly sessionsById = new Map<string, VideoSession>();
   private readonly sessionByMediaSourceId = new Map<string, VideoSession>();
   private readonly mediaSourceIdByObjectUrl = new Map<string, string>();
+  private readonly durationByUrl = new Map<string, number>();
   private readonly selectionListenerByElement = new WeakMap<HTMLMediaElement, ResolveStateListener>();
   private readonly ledger = new AttributionLedger();
   private mutationObserver: MutationObserver | null = null;
@@ -361,6 +367,8 @@ class MediaAttribution {
             this.upgradeTrackMime(meta, sourceBufferMime);
           }
           for (const d of urlIdHints(entry.url)) { session.idHints.add(d); }
+          // Strategies see the lock, so an inflight click must re-resolve.
+          this.notifyResolveListener(session, session.state, "mse-locked");
         }
         console.log(`${LOG_PREFIX} ${session.id} attributed buffer-append → ${entry.url} via ${sourceBufferMime}`);
       }
@@ -441,6 +449,10 @@ class MediaAttribution {
         }
         return;
       }
+
+      case "duration_detected":
+        this.durationByUrl.set(signal.url, signal.duration);
+        return;
     }
   }
 
@@ -588,7 +600,7 @@ class MediaAttribution {
     const findUrlsByIdHint: FindUrlsByIdHint = (idHint) => this.lookupByIdHint(idHint);
 
     const buildCtx = (): ResolveContext => ({
-      clicked: toSessionSnapshot(session),
+      clicked: toSessionSnapshot(session, this.durationByUrl),
       pageUrl,
       hints,
     });
@@ -646,6 +658,8 @@ class MediaAttribution {
             contentType: meta.contentType,
             capturedAt: meta.capturedAt,
             isMaster: meta.isMaster,
+            isLockedByMse: meta.lockedByMse,
+            duration: this.durationByUrl.get(url) ?? 0,
           });
         }
       }

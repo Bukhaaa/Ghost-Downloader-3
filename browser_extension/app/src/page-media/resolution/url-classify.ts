@@ -53,6 +53,17 @@ export function douyinKindOf(url: string): "video" | "audio" | "muxed" | "" {
   return "";
 }
 
+// TikTok serves every web video as one muxed MP4 under /video/tos/. The CDN host varies, and
+// some hosts prefix the path with a signature (/<hash>/<expiry>/video/tos/...). Caption files
+// share that path, so a match alone doesn't prove the URL is a video.
+export function isTikTokVideoUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.includes("/video/tos/");
+  } catch {
+    return false;
+  }
+}
+
 export function isInstagramCdnUrl(url: string): boolean {
   return hostEndsWith(url, "cdninstagram.com") || hostEndsWith(url, "fbcdn.net");
 }

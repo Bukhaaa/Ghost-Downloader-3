@@ -1,6 +1,7 @@
 import {selectDouyin} from "./strategies/douyin";
 import {selectGeneric} from "./strategies/generic";
 import {selectMeta} from "./strategies/instagram";
+import {selectTikTok} from "./strategies/tiktok";
 import {selectYouTube} from "./strategies/youtube";
 import {isStreamUrl} from "./url-classify";
 import type {Resolution, VideoSessionFormKind} from "../types";
@@ -12,12 +13,21 @@ export type AttributedUrlView = {
   readonly contentType: string;
   readonly capturedAt: number;
   readonly isMaster?: boolean;
+  // Its session's player appended a buffer right after this URL's fetch — strong evidence,
+  // though two players loading at once can swap it.
+  readonly isLockedByMse: boolean;
+  // Seconds, read from the URL's MP4 header; 0 when unknown.
+  readonly duration: number;
 };
 
 // Strategies see only this — they MUST NOT reach back into the controller.
 export type SessionSnapshot = {
   readonly formKind: VideoSessionFormKind;
   readonly lastBoundAt: number;
+  // The element's src: a blob: URL under MSE, the media URL itself otherwise.
+  readonly src: string;
+  // The element's duration in seconds; 0 when unknown.
+  readonly duration: number;
   readonly attributedUrls: ReadonlyArray<AttributedUrlView>;
 };
 
@@ -50,6 +60,9 @@ export function selectMediaForPage(ctx: ResolveContext, findUrlsByIdHint: FindUr
   }
   if (host === "youtube.com" || host.endsWith(".youtube.com") || host === "youtu.be") {
     return selectYouTube(ctx);
+  }
+  if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
+    return selectTikTok(ctx);
   }
   return selectGeneric(ctx);
 }
