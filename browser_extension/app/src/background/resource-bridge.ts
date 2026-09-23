@@ -599,7 +599,8 @@ export function createResourceBridge(options: {
         return { ok: false, message: chrome.i18n.getMessage("errorInvalidDownloadRequest") };
       }
       const result = await sendExternalDownload(selection, payload.title, fallbackPageUrl);
-      if (result.ok) { await openActionPopup(); }
+      // A draft waits for the user in the desktop's window; the popup would only cover it.
+      if (result.ok && !result.isDrafted) { await openActionPopup(); }
       return result;
     }
 
@@ -607,6 +608,7 @@ export function createResourceBridge(options: {
   }
 
   // The desktop's yt-dlp extracts the media from the page URL; forward login cookies for gated videos.
+  // It opens as a draft, whose card lists the video's formats so the user picks the quality.
   async function sendExternalDownload(
     selection: { pageUrl: string },
     title: string,
@@ -615,6 +617,7 @@ export function createResourceBridge(options: {
     return options.sendDesktopRequest<CommandResult>({
       type: "create_task",
       source: "page_media",
+      draft: true,
       title: title || "",
       payload: {
         url: selection.pageUrl,

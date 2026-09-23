@@ -135,6 +135,8 @@ export interface ScannedImage {
 
 export interface CommandResult {
   ok: boolean;
+  // The desktop opened the task as a draft for the user to confirm, instead of starting it.
+  isDrafted?: boolean;
   message?: string;
   taskId?: string;
   playbackState?: MediaPlaybackState;
