@@ -5,6 +5,7 @@
  * Built as a standalone IIFE bundle (see scripts/build.mjs).
  */
 import {findActiveMedia} from "./active-media";
+import {titleForMedia} from "./media-title";
 import type {VideoSessionState} from "../types";
 
 declare global {
@@ -311,7 +312,7 @@ const FADE_DURATION_MS = 300;
         type: "page_download_media",
         selection: resolution.selection,
         href: location.href,
-        title: document.title,
+        title: titleForMedia(media),
       });
       const ok = Boolean(result?.ok);
       setStatus(ok ? chrome.i18n.getMessage("sent") : result?.message || chrome.i18n.getMessage("errorSendFailed"), !ok);

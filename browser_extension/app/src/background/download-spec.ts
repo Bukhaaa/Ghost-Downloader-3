@@ -46,13 +46,15 @@ const MIME_EXTENSIONS: Record<string, string> = {
 };
 
 function cleanFilename(value?: string): string {
-  return (value ?? "")
+  const cleaned = (value ?? "")
     .trim()
     .replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[. ]+$/g, "")
-    .trim()
-    .slice(0, 160);
+    .trim();
+  // Cut by code point: slicing UTF-16 units can split an emoji into a lone surrogate, which
+  // no file system accepts.
+  return Array.from(cleaned).slice(0, 160).join("");
 }
 
 function extensionFromMime(mime?: string): string {

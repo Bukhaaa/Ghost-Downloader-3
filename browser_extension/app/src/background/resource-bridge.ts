@@ -514,20 +514,21 @@ export function createResourceBridge(options: {
   // Strategy already proved this URL belongs to the active video, so we must dispatch
   // something — desktop range-probes whatever metadata we can't fill in. The synthesized
   // row goes into the cache so setSent can find it and a later webRequest event can merge
-  // real size/headers into it.
-  async function resourceForMediaUrl(url: string, tabId: number, fallbackTitle: string, fallbackPageUrl: string): Promise<Resource> {
+  // real size/headers into it. The click's title names the task: a feed prefetches its next
+  // videos while another is on screen, so the tab title captured with the request is stale.
+  async function resourceForMediaUrl(url: string, tabId: number, title: string, fallbackPageUrl: string): Promise<Resource> {
     const id = `${tabId}:${urlWithoutHash(url, true)}`;
 
     const direct = cache.resourceById(id);
     if (direct) {
       setMissingReferer(direct, fallbackPageUrl);
-      return direct;
+      return title ? { ...direct, pageTitle: title } : direct;
     }
 
     const waited = await cache.waitForResource(id, 1500);
     if (waited) {
       setMissingReferer(waited, fallbackPageUrl);
-      return waited;
+      return title ? { ...waited, pageTitle: title } : waited;
     }
 
     const snapshot = cache.headerSnapshotByUrl(url);
@@ -540,7 +541,7 @@ export function createResourceBridge(options: {
       id,
       tabId,
       url,
-      pageTitle: fallbackTitle,
+      pageTitle: title,
       pageUrl: fallbackPageUrl,
       filename: basenameOf(filenameFromUrl(url)) || "resource",
       mime: mimeFromUrl(url),
