@@ -1,7 +1,9 @@
-import {fbCdnBitrate, instagramAssetId, instagramKindOf, isInstagramCdnUrl, stripRangeParams} from "../url-classify";
-import {postBindAttributedUrls} from "../strategy";
+import {fbCdnBitrate, fbCdnDuration, instagramAssetId, instagramKindOf, isInstagramCdnUrl, stripRangeParams} from "../url-classify";
 import type {AttributedUrlView, FindUrlsByIdHint, ResolveContext} from "../strategy";
 import type {Resolution} from "../../types";
+
+// efg's duration_s is whole seconds, so it trails the element's duration by up to a second.
+const DURATION_TOLERANCE_S = 2;
 
 function selectBestPair(
   urls: ReadonlyArray<AttributedUrlView>,
@@ -20,65 +22,67 @@ function selectBestPair(
   return bestVideo && bestAudio ? { video: bestVideo.url, audio: bestAudio.url } : null;
 }
 
-// Group by xpv_asset_id, try each group by segment count (the actively playing video
-// has the most fetched segments), then by highest video bitrate as tiebreaker.
-function matchPairByAssetId(
-  post: ReadonlyArray<AttributedUrlView>,
-): { video: string; audio: string } | null {
-  const byAsset = new Map<string, AttributedUrlView[]>();
-  for (const entry of post) {
-    const id = instagramAssetId(entry.url);
-    if (!id) { continue; }
-    let group = byAsset.get(id);
-    if (!group) { group = []; byAsset.set(id, group); }
-    group.push(entry);
+function highestBitrate(urls: ReadonlyArray<AttributedUrlView>): string | undefined {
+  return urls.reduce<AttributedUrlView | undefined>(
+    (best, entry) => (!best || fbCdnBitrate(entry.url) > fbCdnBitrate(best.url) ? entry : best),
+    undefined,
+  )?.url;
+}
+
+// The feed, the Reels tab and Stories keep their neighbours loaded, and the page's JSON lists
+// other posts' representations too, so the tab holds several assets. The clicked player's
+// buffer-append lock names its asset — unless the asset's duration contradicts the element's,
+// as when two players start together and swap locks.
+function selectAssetId(ctx: ResolveContext): string {
+  const { duration } = ctx.clicked;
+  const urlsByAsset = new Map<string, AttributedUrlView[]>();
+  for (const entry of ctx.clicked.attributedUrls) {
+    const id = isInstagramCdnUrl(entry.url) ? instagramAssetId(entry.url) : "";
+    if (id) { urlsByAsset.set(id, [...(urlsByAsset.get(id) ?? []), entry]); }
   }
-  if (byAsset.size <= 1) { return selectBestPair(post); }
-  const maxVideoBitrate = (urls: ReadonlyArray<AttributedUrlView>) =>
-    urls.reduce((max, e) => Math.max(max, instagramKindOf(e.url) === "video" ? fbCdnBitrate(e.url) : 0), 0);
-  const groups = [...byAsset.values()].sort((a, b) =>
-    b.length - a.length || maxVideoBitrate(b) - maxVideoBitrate(a));
-  for (const group of groups) {
-    const pair = selectBestPair(group);
-    if (pair) { return pair; }
-  }
-  return null;
+  const assets = [...urlsByAsset.entries()];
+  const assetDuration = (urls: AttributedUrlView[]) => Math.max(0, ...urls.map((r) => fbCdnDuration(r.url)));
+  const isDurationKnown = (urls: AttributedUrlView[]) => duration > 0 && assetDuration(urls) > 0;
+  const hasSameDuration = (urls: AttributedUrlView[]) =>
+    isDurationKnown(urls) && Math.abs(assetDuration(urls) - duration) <= DURATION_TOLERANCE_S;
+  const isLocked = (urls: AttributedUrlView[]) => urls.some((r) => r.isLockedByMse);
+  const sameDuration = assets.filter(([, urls]) => hasSameDuration(urls));
+  return assets.find(([, urls]) => isLocked(urls) && hasSameDuration(urls))?.[0]
+    // Several same-length videos and no lock among them would be a guess, so wait instead.
+    ?? (sameDuration.length === 1 ? sameDuration[0][0] : undefined)
+    ?? assets.find(([, urls]) => isLocked(urls) && !isDurationKnown(urls))?.[0]
+    ?? (assets.length === 1 && !isDurationKnown(assets[0][1]) ? assets[0][0] : "");
 }
 
 export function selectMeta(ctx: ResolveContext, findUrlsByIdHint: FindUrlsByIdHint): Resolution {
-  const post = postBindAttributedUrls(ctx.clicked).filter((r) => isInstagramCdnUrl(r.url));
-
-  if (ctx.clicked.formKind === "dash") {
-    const pair = matchPairByAssetId(post) ?? findPairByAssetId(post, findUrlsByIdHint);
-    if (pair) {
-      return { kind: "selection", selection: { kind: "merge", video: stripRangeParams(pair.video), audio: stripRangeParams(pair.audio) } };
-    }
-    return { kind: "pending", reason: chrome.i18n.getMessage("waitingForInstagramSeparateTracks") };
+  // A player fed straight from <video src> is playing that very file.
+  if (/^https?:/i.test(ctx.clicked.src)) {
+    return { kind: "selection", selection: { kind: "single", url: stripRangeParams(ctx.clicked.src), formKind: ctx.clicked.formKind } };
   }
 
-  if (post.length === 0) {
+  const assetId = selectAssetId(ctx);
+  if (!assetId) {
     return { kind: "pending", reason: chrome.i18n.getMessage("waitingForVideoResource") };
   }
-  const pair = matchPairByAssetId(post);
+  // A sibling session may still hold tracks it prefetched for this asset.
+  const urls = [
+    ...ctx.clicked.attributedUrls.filter((r) => instagramAssetId(r.url) === assetId),
+    ...findUrlsByIdHint(`xpv_asset_id=${assetId}`),
+  ];
+
+  const pair = selectBestPair(urls);
   if (pair) {
     return { kind: "selection", selection: { kind: "merge", video: stripRangeParams(pair.video), audio: stripRangeParams(pair.audio) } };
   }
-  return { kind: "pending", reason: chrome.i18n.getMessage("waitingForInstagramSeparateTracks") };
-}
-
-// Extract xpv_asset_id from any URL we already have, then search all sessions for
-// sibling tracks with the same asset ID — rescues prefetched URLs still owned by a
-// sibling session.
-function findPairByAssetId(
-  post: ReturnType<typeof postBindAttributedUrls>,
-  findUrlsByIdHint: FindUrlsByIdHint,
-): { video: string; audio: string } | null {
-  let assetId = "";
-  for (const entry of post) {
-    assetId = instagramAssetId(entry.url);
-    if (assetId) { break; }
+  // A progressive MP4 carries both tracks.
+  const muxed = highestBitrate(urls.filter((r) => !instagramKindOf(r.url)));
+  if (muxed) {
+    return { kind: "selection", selection: { kind: "single", url: stripRangeParams(muxed), formKind: "muxed" } };
   }
-  if (!assetId) { return null; }
-  const matches = findUrlsByIdHint(`xpv_asset_id=${assetId}`);
-  return selectBestPair(matches);
+  // With a single SourceBuffer the video has no audio track to wait for.
+  const silent = ctx.clicked.formKind === "dash" ? undefined : highestBitrate(urls.filter((r) => instagramKindOf(r.url) === "video"));
+  if (silent) {
+    return { kind: "selection", selection: { kind: "single", url: stripRangeParams(silent), formKind: ctx.clicked.formKind } };
+  }
+  return { kind: "pending", reason: chrome.i18n.getMessage("waitingForInstagramSeparateTracks") };
 }
