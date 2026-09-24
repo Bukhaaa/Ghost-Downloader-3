@@ -82,6 +82,48 @@ type GhostXMLHttpRequest = XMLHttpRequest & { __gdUrl?: string };
     } catch { /* Opaque response — clone() throws. */ }
   }
 
+  function fourccAt(bytes: Uint8Array, offset: number): string {
+    return String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+  }
+
+  // A faststart MP4 opens with ftyp then moov, whose first child mvhd holds the duration.
+  // A mid-file range, a fragmented file or a moov at the tail yields 0.
+  function parseMp4Duration(head: Uint8Array): number {
+    if (head.length < 8 || fourccAt(head, 4) !== "ftyp") { return 0; }
+    const view = new DataView(head.buffer, head.byteOffset, head.byteLength);
+    let offset = 0;
+    while (offset + 16 <= head.length) {
+      const boxSize = view.getUint32(offset);
+      if (fourccAt(head, offset + 4) === "moov") {
+        const mvhd = offset + 8;
+        if (mvhd + 16 > head.length || fourccAt(head, mvhd + 4) !== "mvhd") { return 0; }
+        const isVersion1 = view.getUint8(mvhd + 8) === 1;
+        if (mvhd + (isVersion1 ? 40 : 28) > head.length) { return 0; }
+        const timescale = view.getUint32(mvhd + (isVersion1 ? 28 : 20));
+        const duration = isVersion1 ? Number(view.getBigUint64(mvhd + 32)) : view.getUint32(mvhd + 24);
+        return timescale > 0 ? duration / timescale : 0;
+      }
+      if (boxSize < 8) { return 0; }
+      offset += boxSize;
+    }
+    return 0;
+  }
+
+  // Two players loading at once interleave their fetches and buffer appends; each MP4's
+  // duration is what tells their files apart.
+  function probeMp4Duration(response: Response, url: string): void {
+    try {
+      if (!/^(video|audio)\/mp4/i.test(response.headers.get("content-type") ?? "")) { return; }
+      const reader = response.clone().body?.getReader();
+      if (!reader) { return; }
+      reader.read().then(({ value }) => {
+        reader.cancel();
+        const duration = value ? parseMp4Duration(value) : 0;
+        if (duration > 0) { postMediaSignal({ kind: "duration_detected", url, duration }); }
+      }).catch(() => {});
+    } catch { /* Opaque response — clone() throws. */ }
+  }
+
   if (typeof window.fetch === "function") {
     const originalFetch = window.fetch;
     window.fetch = function patchedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
@@ -100,6 +142,7 @@ type GhostXMLHttpRequest = XMLHttpRequest & { __gdUrl?: string };
             contentType: response?.headers?.get?.("content-type") ?? "",
           });
           probeStreamContent(response, resolvedUrl);
+          probeMp4Duration(response, resolvedUrl);
         } catch {
           // Opaque response.
         }

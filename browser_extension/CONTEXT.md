@@ -88,7 +88,7 @@ _Avoid_: video tracker、media session
 获取 Resolution 后发送到 Resource Bridge 转发给桌面。
 
 **Resolution Strategy**:
-按站点分发的下载解析逻辑（YouTube、X、Douyin、Instagram、generic）。
+按站点分发的下载解析逻辑（YouTube、X、Douyin、TikTok、Instagram、generic）。
 纯函数，不能回调 Attribution Engine。输出 Resolution。
 
 **Resolution**:

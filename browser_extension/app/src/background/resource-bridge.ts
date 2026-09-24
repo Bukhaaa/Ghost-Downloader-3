@@ -514,20 +514,21 @@ export function createResourceBridge(options: {
   // Strategy already proved this URL belongs to the active video, so we must dispatch
   // something — desktop range-probes whatever metadata we can't fill in. The synthesized
   // row goes into the cache so setSent can find it and a later webRequest event can merge
-  // real size/headers into it.
-  async function resourceForMediaUrl(url: string, tabId: number, fallbackTitle: string, fallbackPageUrl: string): Promise<Resource> {
+  // real size/headers into it. The click's title names the task: a feed prefetches its next
+  // videos while another is on screen, so the tab title captured with the request is stale.
+  async function resourceForMediaUrl(url: string, tabId: number, title: string, fallbackPageUrl: string): Promise<Resource> {
     const id = `${tabId}:${urlWithoutHash(url, true)}`;
 
     const direct = cache.resourceById(id);
     if (direct) {
       setMissingReferer(direct, fallbackPageUrl);
-      return direct;
+      return title ? { ...direct, pageTitle: title } : direct;
     }
 
     const waited = await cache.waitForResource(id, 1500);
     if (waited) {
       setMissingReferer(waited, fallbackPageUrl);
-      return waited;
+      return title ? { ...waited, pageTitle: title } : waited;
     }
 
     const snapshot = cache.headerSnapshotByUrl(url);
@@ -540,7 +541,7 @@ export function createResourceBridge(options: {
       id,
       tabId,
       url,
-      pageTitle: fallbackTitle,
+      pageTitle: title,
       pageUrl: fallbackPageUrl,
       filename: basenameOf(filenameFromUrl(url)) || "resource",
       mime: mimeFromUrl(url),
@@ -598,7 +599,8 @@ export function createResourceBridge(options: {
         return { ok: false, message: chrome.i18n.getMessage("errorInvalidDownloadRequest") };
       }
       const result = await sendExternalDownload(selection, payload.title, fallbackPageUrl);
-      if (result.ok) { await openActionPopup(); }
+      // A draft waits for the user in the desktop's window; the popup would only cover it.
+      if (result.ok && !result.isDrafted) { await openActionPopup(); }
       return result;
     }
 
@@ -606,6 +608,7 @@ export function createResourceBridge(options: {
   }
 
   // The desktop's yt-dlp extracts the media from the page URL; forward login cookies for gated videos.
+  // It opens as a draft, whose card lists the video's formats so the user picks the quality.
   async function sendExternalDownload(
     selection: { pageUrl: string },
     title: string,
@@ -614,6 +617,7 @@ export function createResourceBridge(options: {
     return options.sendDesktopRequest<CommandResult>({
       type: "create_task",
       source: "page_media",
+      draft: true,
       title: title || "",
       payload: {
         url: selection.pageUrl,
