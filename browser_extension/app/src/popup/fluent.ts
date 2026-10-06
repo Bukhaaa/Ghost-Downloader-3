@@ -1,5 +1,5 @@
 import type {ComponentType} from "react";
-import type {BadgeProps} from "@fluentui/react-components";
+import type {AvatarNamedColor, BadgeProps} from "@fluentui/react-components";
 import {
     ArrowClockwiseRegular,
     CheckmarkCircleRegular,
@@ -38,6 +38,19 @@ const VISUAL_ICON_MAP: Record<VisualKind, ComponentType> = {
   stream: GlobeVideoRegular,
 };
 
+// The colours file managers use, so a type reads at a glance: red PDFs, green spreadsheets.
+const VISUAL_COLOR_MAP: Record<VisualKind, AvatarNamedColor> = {
+  download: "steel",
+  video: "purple",
+  audio: "pumpkin",
+  archive: "marigold",
+  document: "royal-blue",
+  pdf: "red",
+  spreadsheet: "dark-green",
+  image: "teal",
+  stream: "magenta",
+};
+
 const FEATURE_ICON_MAP: Record<AdvancedFeatureKey, ComponentType> = {
   recorder: VideoClipRegular,
   webrtc: DataUsageRegular,
@@ -49,6 +62,10 @@ const FEATURE_ICON_MAP: Record<AdvancedFeatureKey, ComponentType> = {
 
 export function visualIcon(kind: VisualKind) {
   return VISUAL_ICON_MAP[kind];
+}
+
+export function visualColor(kind: VisualKind): AvatarNamedColor {
+  return VISUAL_COLOR_MAP[kind];
 }
 
 export function featureIcon(key: AdvancedFeatureKey) {

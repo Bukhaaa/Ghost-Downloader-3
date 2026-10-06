@@ -492,7 +492,8 @@ export function taskActionLabel(task: TaskSummary): string {
 }
 
 export function taskVisual(task: TaskSummary): { kind: VisualKind } {
-  const extension = fileExtension(task.fileExt || task.name);
+  // The desktop sends fileExt bare ("mp4"), not as a filename.
+  const extension = task.fileExt || fileExtension(task.name);
   return {
     kind: visualKindOf({
       extension,

@@ -11,7 +11,7 @@ import {ArrowDownloadRegular, CheckmarkRegular} from "@fluentui/react-icons";
 
 import type {Resource} from "../../shared/types";
 import {describeResource, formatBytes, isDashSegment,} from "../../shared/utils";
-import {visualIcon} from "../fluent";
+import {visualColor, visualIcon} from "../fluent";
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -135,18 +135,16 @@ export function ResourceCard({
             <img alt="" className={styles.poster} src={resource.posterUrl} />
             <Avatar
               className={styles.typeOverlay}
-              color="colorful"
+              color={visualColor(presentation.visual.kind)}
               icon={<ResourceIcon />}
-              idForColor={resource.id}
               shape="square"
               size={16}
             />
           </div>
         ) : (
           <Avatar
-            color="colorful"
+            color={visualColor(presentation.visual.kind)}
             icon={<ResourceIcon />}
-            idForColor={resource.id}
             shape="square"
             size={24}
           />

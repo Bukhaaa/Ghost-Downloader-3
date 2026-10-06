@@ -12,7 +12,7 @@ import {
 
 import type {TaskAction, TaskSummary} from "../../shared/types";
 import {formatBytes, formatTaskMetric, taskVisual} from "../../shared/utils";
-import {visualIcon} from "../fluent";
+import {visualColor, visualIcon} from "../fluent";
 
 const useStyles = makeStyles({
   root: {
@@ -165,9 +165,8 @@ export function TaskCard({
       >
         <div className={styles.row}>
           <Avatar
-            color="colorful"
+            color={visualColor(visual.kind)}
             icon={<TaskIcon />}
-            idForColor={task.taskId}
             shape="square"
             size={24}
           />
