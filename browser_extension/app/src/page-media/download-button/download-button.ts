@@ -299,6 +299,11 @@ const FADE_DURATION_MS = 300;
     try {
       const resolution = await pageMedia.selectMediaForElement(media, {
         poster: media.poster || "",
+        // Facebook marks its players with data-video-id, but wraps those in its feed's Reels row
+        // in their /reel/<id> links instead.
+        videoId: media.closest("[data-video-id]")?.getAttribute("data-video-id")
+          ?? /\/reel\/(\d+)(?:[/?]|$)/.exec(media.closest('a[href*="/reel/"]')?.getAttribute("href") ?? "")?.[1]
+          ?? "",
       }, onState);
       if (!resolution || resolution.kind === "refused") {
         setStatus(resolution?.message || chrome.i18n.getMessage("errorCannotLocateMedia"), true);

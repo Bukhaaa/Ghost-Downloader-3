@@ -18,6 +18,9 @@ export type AttributedUrlView = {
   readonly isLockedByMse: boolean;
   // Seconds, read from the URL's MP4 header; 0 when unknown.
   readonly duration: number;
+  // The browser fetched it after its session's element started loading — as the background
+  // saw it, for players that fetch in a worker, where no buffer-append lock is seen.
+  readonly isFetchedInSession: boolean;
 };
 
 // Strategies see only this — they MUST NOT reach back into the controller.
@@ -33,6 +36,8 @@ export type SessionSnapshot = {
 
 export type ResolveHints = {
   readonly poster: string;
+  // The page's own id for the clicked video, which Facebook's CDN URLs repeat. Empty elsewhere.
+  readonly videoId: string;
 };
 
 export type ResolveContext = {

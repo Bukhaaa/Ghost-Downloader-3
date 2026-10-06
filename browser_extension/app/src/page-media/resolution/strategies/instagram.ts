@@ -1,9 +1,12 @@
-import {fbCdnBitrate, fbCdnDuration, instagramAssetId, instagramKindOf, isInstagramCdnUrl, stripRangeParams} from "../url-classify";
+import {fbCdnBitrate, fbCdnDuration, fbCdnVideoId, instagramAssetId, instagramKindOf, isInstagramCdnUrl, stripRangeParams} from "../url-classify";
 import type {AttributedUrlView, FindUrlsByIdHint, ResolveContext} from "../strategy";
 import type {Resolution} from "../../types";
 
 // efg's duration_s is whole seconds, so it trails the element's duration by up to a second.
 const DURATION_TOLERANCE_S = 2;
+// Lengths read from the files themselves: a DASH video track can end a frame short of the
+// element (23.300 s against 23.337 s), and audio runs a tenth of a second long.
+const EXACT_DURATION_TOLERANCE_S = 0.15;
 
 function selectBestPair(
   urls: ReadonlyArray<AttributedUrlView>,
@@ -29,27 +32,51 @@ function highestBitrate(urls: ReadonlyArray<AttributedUrlView>): string | undefi
   )?.url;
 }
 
+// Seconds read from the header of one of the asset's files; 0 until the engine has.
+function exactDurationOf(urls: ReadonlyArray<AttributedUrlView>): number {
+  return Math.max(0, ...urls.map((r) => r.duration));
+}
+
 // The feed, the Reels tab and Stories keep their neighbours loaded, and the page's JSON lists
-// other posts' representations too, so the tab holds several assets. The clicked player's
-// buffer-append lock names its asset — unless the asset's duration contradicts the element's,
-// as when two players start together and swap locks.
+// other posts' representations too, so the tab holds several assets. On Facebook the player
+// names its video, and that video's URLs carry the same id. Instagram's player names nothing,
+// but its buffer-append lock names the asset — unless the asset's duration contradicts the
+// element's, as when two players start together and swap locks. Facebook's players buffer in
+// a worker, where no lock is seen, and its Watch page names its video only in the URL, while
+// playing suggested ones too.
 function selectAssetId(ctx: ResolveContext): string {
   const { duration } = ctx.clicked;
+  const { videoId } = ctx.hints;
+  const pageVideoId = ctx.pageUrl.searchParams.get("v") ?? /\/videos\/(?:[^/]+\/)?(\d+)/.exec(ctx.pageUrl.pathname)?.[1];
   const urlsByAsset = new Map<string, AttributedUrlView[]>();
   for (const entry of ctx.clicked.attributedUrls) {
     const id = isInstagramCdnUrl(entry.url) ? instagramAssetId(entry.url) : "";
     if (id) { urlsByAsset.set(id, [...(urlsByAsset.get(id) ?? []), entry]); }
   }
-  const assets = [...urlsByAsset.entries()];
+  const namesVideo = (urls: AttributedUrlView[], id: string | undefined) => !!id && urls.some((r) => fbCdnVideoId(r.url) === id);
+  const named = [...urlsByAsset].find(([, urls]) => namesVideo(urls, videoId));
+  if (named) { return named[0]; }
+  // With the clicked video named, an asset naming any video is another one.
+  const assets = [...urlsByAsset].filter(([, urls]) => !videoId || !urls.some((r) => fbCdnVideoId(r.url)));
   const assetDuration = (urls: AttributedUrlView[]) => Math.max(0, ...urls.map((r) => fbCdnDuration(r.url)));
   const isDurationKnown = (urls: AttributedUrlView[]) => duration > 0 && assetDuration(urls) > 0;
   const hasSameDuration = (urls: AttributedUrlView[]) =>
     isDurationKnown(urls) && Math.abs(assetDuration(urls) - duration) <= DURATION_TOLERANCE_S;
   const isLocked = (urls: AttributedUrlView[]) => urls.some((r) => r.isLockedByMse);
   const sameDuration = assets.filter(([, urls]) => hasSameDuration(urls));
+  // Stories often share a second, and a photo set to music runs exactly 15 s. Once the engine
+  // has read every candidate's exact length, that decides, and among equal lengths the one
+  // the player fetched since it started — its first seconds come prefetched, the rest then.
+  const sameLength = sameDuration.every(([, urls]) => exactDurationOf(urls) > 0)
+    ? sameDuration.filter(([, urls]) => Math.abs(exactDurationOf(urls) - duration) <= EXACT_DURATION_TOLERANCE_S)
+    : [];
+  const fetchedSameLength = sameLength.filter(([, urls]) => urls.some((r) => r.isFetchedInSession));
   return assets.find(([, urls]) => isLocked(urls) && hasSameDuration(urls))?.[0]
-    // Several same-length videos and no lock among them would be a guess, so wait instead.
+    ?? sameDuration.find(([, urls]) => namesVideo(urls, pageVideoId))?.[0]
     ?? (sameDuration.length === 1 ? sameDuration[0][0] : undefined)
+    ?? (sameLength.length === 1 ? sameLength[0][0] : undefined)
+    ?? (fetchedSameLength.length === 1 ? fetchedSameLength[0][0] : undefined)
+    // Same-length videos that nothing tells apart would be a guess, so wait instead.
     ?? assets.find(([, urls]) => isLocked(urls) && !isDurationKnown(urls))?.[0]
     ?? (assets.length === 1 && !isDurationKnown(assets[0][1]) ? assets[0][0] : "");
 }

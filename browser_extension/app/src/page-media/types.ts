@@ -20,6 +20,7 @@ export type AttributedUrlMeta = {
   tier: AttributionTier;
   lockedByMse: boolean;
   isMaster?: boolean;
+  isFetchedInSession?: boolean;
 };
 
 export type MseAttributionSignal =

@@ -1,8 +1,9 @@
 import {isCatCatchMedia} from "../../shared/cat-catch";
 import {fileExtension, filenameFromUrl, mimeFromUrl} from "../../shared/utils";
-import {fbCdnDuration, instagramAssetId, isInstagramCdnUrl, isStreamUrl, urlIdHints} from "../resolution/url-classify";
+import {fbCdnDuration, instagramAssetId, instagramKindOf, isInstagramCdnUrl, isStreamUrl, stripRangeParams, urlIdHints} from "../resolution/url-classify";
 
 import {AttributionLedger} from "./attribution-ledger";
+import {parseMp4Duration} from "./mp4-duration";
 import {selectMediaForPage} from "../resolution/strategy";
 import {isMediaSignal} from "./attribution-signal";
 import type {AttributedUrlView, FindUrlsByIdHint, SessionSnapshot, ResolveContext, ResolveHints} from "../resolution/strategy";
@@ -27,6 +28,9 @@ type ResolveStateListener = (state: VideoSessionState, reason: string) => void;
 // mse_buffer_appended usually follows fetch_completed within tens of ms; slow CPUs stretch.
 const FETCH_BUFFER_CORRELATION_MS = 2500;
 const RECENT_FETCHES_CAP = 16;
+const MAX_DURATION_PROBES = 8;
+// A player starts fetching a moment before its element's loadstart fires.
+const FETCH_LEAD_MS = 1000;
 
 function toFormKind(mimeTypes: Set<string>): VideoSessionFormKind {
   if (mimeTypes.size === 0) { return "unknown"; }
@@ -68,6 +72,7 @@ function toSessionSnapshot(session: VideoSession, durationByUrl: ReadonlyMap<str
       isMaster: meta.isMaster,
       isLockedByMse: meta.lockedByMse,
       duration: durationByUrl.get(url) ?? 0,
+      isFetchedInSession: meta.isFetchedInSession ?? false,
     })),
   );
   const duration = session.elementRef.deref()?.duration ?? 0;
@@ -613,6 +618,8 @@ class MediaAttribution {
 
     this.transition(session, "waiting", initial.reason);
     let lastPendingReason = initial.reason;
+    // Exact lengths may be all the strategy lacks.
+    void this.probeDurations(session).then(() => this.notifyResolveListener(session, session.state, "durations-probed"));
 
     return new Promise<Resolution>((resolve) => {
       let settled = false;
@@ -660,6 +667,7 @@ class MediaAttribution {
             isMaster: meta.isMaster,
             isLockedByMse: meta.lockedByMse,
             duration: this.durationByUrl.get(url) ?? 0,
+            isFetchedInSession: meta.isFetchedInSession ?? false,
           });
         }
       }
@@ -675,27 +683,62 @@ class MediaAttribution {
     const element = session.elementRef.deref();
     const videoDuration = element instanceof HTMLVideoElement && Number.isFinite(element.duration) ? element.duration : 0;
     const now = performance.now();
+    // The background stamps each fetch with Date.now().
+    const sessionStartedAt = performance.timeOrigin + session.startedAt - FETCH_LEAD_MS;
 
-    const addUrl = (url: string, mime: string, capturedAt: number): void => {
+    const addUrl = (url: string, mime: string, capturedAt: number, isFetchedInSession: boolean): void => {
       if (session.attributedUrls.has(url)) { return; }
       const urlDuration = fbCdnDuration(url);
       if (videoDuration > 0 && urlDuration > 0 && Math.abs(videoDuration - urlDuration) > 2) { return; }
-      session.attributedUrls.set(url, { contentType: mime, capturedAt, tier: 0, lockedByMse: false });
+      session.attributedUrls.set(url, { contentType: mime, capturedAt, tier: 0, lockedByMse: false, isFetchedInSession });
     };
 
     try {
       const response = await chrome.runtime.sendMessage({ type: "request_tab_video_resources" });
       if (Array.isArray(response?.urls)) {
-        for (const entry of response.urls) { addUrl(entry.url, entry.mime || "", entry.capturedAt || now); }
+        for (const entry of response.urls) {
+          addUrl(entry.url, entry.mime || "", entry.capturedAt || now, entry.capturedAt >= sessionStartedAt);
+        }
       }
     } catch { /* Extension context invalidated. */ }
 
     // Page's embedded JSON often contains higher-quality DASH representation URLs that
     // the adaptive player hasn't fetched yet.
-    for (const url of this.parseFbCdnUrlsFromPage()) { addUrl(url, "", now); }
+    for (const url of this.parseFbCdnUrlsFromPage()) { addUrl(url, "", now, false); }
 
     if (session.attributedUrls.size > 0) {
       console.log(`${LOG_PREFIX} ${session.id} populated ${session.attributedUrls.size} url(s) from background`);
+    }
+  }
+
+  // efg's duration_s is whole seconds, which stories often share, and a worker's fetches never
+  // reach the probe that reads MP4 headers. So when several assets share the element's second,
+  // each one's exact length is read from the first bytes of one of its files — a video track or
+  // a muxed file, since audio runs a tenth of a second long, unless audio is all there is.
+  private async probeDurations(session: VideoSession): Promise<void> {
+    const element = session.elementRef.deref();
+    const elementDuration = element && Number.isFinite(element.duration) ? element.duration : 0;
+    const urlsByAsset = new Map<string, string[]>();
+    for (const url of session.attributedUrls.keys()) {
+      const asset = isInstagramCdnUrl(url) ? instagramAssetId(url) : "";
+      if (asset && Math.abs(fbCdnDuration(url) - elementDuration) <= 2) {
+        urlsByAsset.set(asset, [...(urlsByAsset.get(asset) ?? []), url]);
+      }
+    }
+    if (elementDuration <= 0 || urlsByAsset.size < 2) { return; }
+    const urls = [...urlsByAsset.values()]
+      .filter((assetUrls) => !assetUrls.some((url) => this.durationByUrl.has(url)))
+      .map((assetUrls) => assetUrls.find((url) => instagramKindOf(url) !== "audio") ?? assetUrls[0])
+      .slice(0, MAX_DURATION_PROBES);
+    await Promise.all(urls.map(async (url) => {
+      try {
+        const response = await fetch(stripRangeParams(url), { headers: { Range: "bytes=0-4095" }, credentials: "omit" });
+        const duration = parseMp4Duration(new Uint8Array(await response.arrayBuffer()));
+        if (duration > 0) { this.durationByUrl.set(url, duration); }
+      } catch { /* The asset keeps efg's whole seconds. */ }
+    }));
+    if (urls.length > 0) {
+      console.log(`${LOG_PREFIX} ${session.id} probed ${urls.length} duration(s) near ${elementDuration.toFixed(3)}s`);
     }
   }
 

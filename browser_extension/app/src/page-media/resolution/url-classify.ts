@@ -108,6 +108,17 @@ export function fbCdnDuration(url: string): number {
   return typeof dur === "number" && dur > 0 ? dur : 0;
 }
 
+// Facebook's player markup names its video (data-video-id), and so do that video's URLs. Read
+// from the raw efg JSON: ids can pass 2^53, where JSON.parse would round them.
+export function fbCdnVideoId(url: string): string {
+  try {
+    const efg = atob(new URL(url).searchParams.get("efg") ?? "");
+    return /"video_id":\s*"?(\d+)/.exec(efg)?.[1] ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function instagramKindOf(url: string): "video" | "audio" | "" {
   const tag = instagramVencodeTag(url);
   if (!tag) { return ""; }
