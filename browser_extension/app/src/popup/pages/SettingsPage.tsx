@@ -20,12 +20,16 @@ import {useCallback, useEffect, useRef, useState} from "react";
 import {DEFAULT_SERVER_URL, EXTENSION_VERSION} from "../../shared/constants";
 import {
     BYPASS_SHORTCUT_KEY,
+    DOWNLOAD_FOLDER_KEY,
     MIN_TAKE_SIZE_KB_KEY,
     SKIP_EXTENSIONS_KEY,
     SKIP_DOMAINS_KEY,
     SHOULD_OPEN_POPUP_ON_SENT_KEY,
+    SHOULD_SORT_BY_TYPE_KEY,
     SHOULD_TAKE_UNKNOWN_SIZE_KEY,
+    TYPE_FOLDERS_KEY,
 } from "../../background/constants";
+import {DEFAULT_TYPE_FOLDERS, FOLDER_CATEGORIES, type FolderCategory} from "../../background/type-folders";
 import type {ThemePreference} from "../../shared/types";
 import {
   type BypassShortcut,
@@ -34,6 +38,17 @@ import {
   toBypassShortcut,
   toShortcutLabel,
 } from "../../shared/bypass-shortcut";
+
+const FOLDER_LABEL_KEYS: Record<FolderCategory, string> = {
+  video: "folderVideo",
+  music: "folderMusic",
+  pictures: "folderPictures",
+  pdf: "folderPdf",
+  documents: "folderDocuments",
+  compressed: "folderCompressed",
+  programs: "folderPrograms",
+  other: "folderOther",
+};
 
 const SKIP_CATEGORIES = [
   { key: "catImages", extensions: ["jpg", "jpeg", "png", "gif", "webp", "svg", "avif", "bmp", "ico"] },
@@ -118,6 +133,9 @@ export function SettingsPage({
   const [skipExtensionsRaw, setSkipExtensionsRaw] = useState("");
   const [skipDomains, setSkipDomains] = useState<string[]>([]);
   const [openPopupOnSent, setOpenPopupOnSent] = useState(true);
+  const [sortByType, setSortByType] = useState(false);
+  const [downloadFolder, setDownloadFolder] = useState("");
+  const [typeFolders, setTypeFolders] = useState<Record<FolderCategory, string>>({ ...DEFAULT_TYPE_FOLDERS });
   const [bypassShortcut, setBypassShortcut] = useState<BypassShortcut>(DEFAULT_BYPASS_SHORTCUT);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDraft, setRecordingDraft] = useState<BypassShortcut | null>(null);
@@ -152,6 +170,9 @@ export function SettingsPage({
       [SKIP_DOMAINS_KEY]: [],
       [SHOULD_OPEN_POPUP_ON_SENT_KEY]: true,
       [BYPASS_SHORTCUT_KEY]: null,
+      [SHOULD_SORT_BY_TYPE_KEY]: false,
+      [DOWNLOAD_FOLDER_KEY]: "",
+      [TYPE_FOLDERS_KEY]: DEFAULT_TYPE_FOLDERS,
     }, (result) => {
       setMinSizeKB(Number(result[MIN_TAKE_SIZE_KB_KEY]) || 0);
       setInterceptUnknown(Boolean(result[SHOULD_TAKE_UNKNOWN_SIZE_KEY] ?? true));
@@ -159,6 +180,9 @@ export function SettingsPage({
       setSkipDomains(Array.isArray(result[SKIP_DOMAINS_KEY]) ? result[SKIP_DOMAINS_KEY] : []);
       setOpenPopupOnSent(Boolean(result[SHOULD_OPEN_POPUP_ON_SENT_KEY] ?? true));
       setBypassShortcut(parseBypassShortcut(result[BYPASS_SHORTCUT_KEY]));
+      setSortByType(Boolean(result[SHOULD_SORT_BY_TYPE_KEY]));
+      setDownloadFolder(String(result[DOWNLOAD_FOLDER_KEY] ?? ""));
+      setTypeFolders({ ...DEFAULT_TYPE_FOLDERS, ...(result[TYPE_FOLDERS_KEY] as Partial<Record<FolderCategory, string>>) });
     });
   }, []);
 
@@ -437,6 +461,48 @@ export function SettingsPage({
             <option value="dark">{chrome.i18n.getMessage("darkTheme")}</option>
           </Select>
         </Field>
+      </Card>
+
+      <Card appearance="filled-alternative" className={styles.card}>
+        <Body1Strong>{chrome.i18n.getMessage("typeFolders")}</Body1Strong>
+
+        <Field label={chrome.i18n.getMessage("sortByType")} hint={chrome.i18n.getMessage("sortByTypeHint")}>
+          <Switch
+            checked={sortByType}
+            onChange={(_event, data: SwitchOnChangeData) => {
+              setSortByType(data.checked);
+              void chrome.storage.local.set({ [SHOULD_SORT_BY_TYPE_KEY]: data.checked });
+            }}
+          />
+        </Field>
+
+        {sortByType && (
+          <>
+            <Field label={chrome.i18n.getMessage("downloadFolder")} hint={chrome.i18n.getMessage("downloadFolderHint")}>
+              <Input
+                value={downloadFolder}
+                placeholder="C:/Users/you/Downloads"
+                onChange={(_event, data) => {
+                  setDownloadFolder(data.value);
+                  void chrome.storage.local.set({ [DOWNLOAD_FOLDER_KEY]: data.value });
+                }}
+              />
+            </Field>
+            {FOLDER_CATEGORIES.map((category) => (
+              <Field key={category} label={chrome.i18n.getMessage(FOLDER_LABEL_KEYS[category])} orientation="horizontal">
+                <Input
+                  value={typeFolders[category]}
+                  placeholder={DEFAULT_TYPE_FOLDERS[category]}
+                  onChange={(_event, data) => {
+                    const next = { ...typeFolders, [category]: data.value };
+                    setTypeFolders(next);
+                    void chrome.storage.local.set({ [TYPE_FOLDERS_KEY]: next });
+                  }}
+                />
+              </Field>
+            ))}
+          </>
+        )}
       </Card>
 
       <Card appearance="filled-alternative" className={styles.card}>

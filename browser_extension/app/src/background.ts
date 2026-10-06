@@ -10,13 +10,16 @@ import {createFeatureBridge} from "./background/feature-bridge";
 import {createMediaBridge} from "./background/media-bridge";
 import {createResourceBridge} from "./background/resource-bridge";
 import {
+    DOWNLOAD_FOLDER_KEY,
     IS_MEDIA_BUTTON_ENABLED_KEY,
     MIN_TAKE_SIZE_KB_KEY,
     SKIP_EXTENSIONS_KEY,
     SKIP_DOMAINS_KEY,
     SHOULD_OPEN_POPUP_ON_SENT_KEY,
+    SHOULD_SORT_BY_TYPE_KEY,
     SHOULD_TAKE_UNKNOWN_SIZE_KEY,
     SHOULD_TAKE_DOWNLOADS_KEY,
+    TYPE_FOLDERS_KEY,
 } from "./background/constants";
 import {
     cancelDownload,
@@ -27,9 +30,10 @@ import {
     queryTabs,
 } from "./background/chrome-helpers";
 import {onSendHeadersExtraInfoSpec, supportsDownloadDeterminingFilename,} from "./shared/browser";
-import {domainFromUrl} from "./shared/utils";
+import {domainFromUrl, filenameFromUrl} from "./shared/utils";
 import {loadBaseIcons, updateIconForTasks} from "./background/icon-progress";
 import {enqueue, flush, pendingCount} from "./background/task-queue";
+import {buildFolderPath, DEFAULT_TYPE_FOLDERS, folderCategoryOf, type FolderCategory} from "./background/type-folders";
 
 function parseExtensions(raw: string): Set<string> {
   const result = new Set<string>();
@@ -47,17 +51,34 @@ async function flushQueue(): Promise<void> {
   }
 }
 
+// With sorting by type on, a new task carries its type's folder.
+async function withTypeFolder(request: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const task = request.payload as Record<string, unknown> | undefined;
+  if (request.type !== "create_task" || !task || task.path) { return request; }
+  const settings = await chrome.storage.local.get({
+    [SHOULD_SORT_BY_TYPE_KEY]: false,
+    [DOWNLOAD_FOLDER_KEY]: "",
+    [TYPE_FOLDERS_KEY]: DEFAULT_TYPE_FOLDERS,
+  });
+  if (!settings[SHOULD_SORT_BY_TYPE_KEY]) { return request; }
+  const filename = String(task.filename || "") || filenameFromUrl(String(task.url || ""));
+  const folders = { ...DEFAULT_TYPE_FOLDERS, ...(settings[TYPE_FOLDERS_KEY] as Partial<Record<FolderCategory, string>>) };
+  const path = buildFolderPath(String(settings[DOWNLOAD_FOLDER_KEY]), folders[folderCategoryOf(String(request.source), filename)]);
+  return path ? { ...request, payload: { ...task, path } } : request;
+}
+
 async function sendTaskOrEnqueue<T extends CommandResult>(payload: Record<string, unknown>, timeoutMs?: number): Promise<T> {
+  const request = await withTypeFolder(payload);
   if (desktopBridge.isReady()) {
     try {
-      return await desktopBridge.sendRequest<T>(payload, timeoutMs);
+      return await desktopBridge.sendRequest<T>(request, timeoutMs);
     } catch (error) {
       if (desktopBridge.isReady()) {
         throw error;
       }
     }
   }
-  await enqueue(payload);
+  await enqueue(request);
   autoLaunchPending = true;
   return { ok: true, message: chrome.i18n.getMessage("taskQueued") } as T;
 }

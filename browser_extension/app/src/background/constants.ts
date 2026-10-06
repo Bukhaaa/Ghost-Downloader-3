@@ -18,6 +18,9 @@ export const BYPASS_SHORTCUT_KEY = "bypassShortcut";
 export const SKIP_EXTENSIONS_KEY = "skipExtensions";
 export const SKIP_DOMAINS_KEY = "skipDomains";
 export const SHOULD_OPEN_POPUP_ON_SENT_KEY = "shouldOpenPopupOnSent";
+export const SHOULD_SORT_BY_TYPE_KEY = "shouldSortByType";
+export const DOWNLOAD_FOLDER_KEY = "downloadFolder";
+export const TYPE_FOLDERS_KEY = "typeFolders";
 export const FEATURE_TAB_STATE_KEY = "featureTabState";
 
 export const BRIDGE_RESOURCE_CACHE_KEY = "bridgeResourceCacheByTab";

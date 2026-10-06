@@ -697,5 +697,44 @@
   },
   "openPopupOnSent": {
     "message": "Open extension popup after sending task"
+  },
+  "downloadFolder": {
+    "message": "Main download folder"
+  },
+  "downloadFolderHint": {
+    "message": "Ghost Downloader's download folder, e.g. C:/Users/you/Downloads. Each type's folder below is a folder inside it, or a full path such as D:/Videos."
+  },
+  "folderCompressed": {
+    "message": "Compressed"
+  },
+  "folderDocuments": {
+    "message": "Documents"
+  },
+  "folderMusic": {
+    "message": "Music"
+  },
+  "folderOther": {
+    "message": "Other files"
+  },
+  "folderPdf": {
+    "message": "PDF"
+  },
+  "folderPictures": {
+    "message": "Pictures"
+  },
+  "folderPrograms": {
+    "message": "Programs"
+  },
+  "folderVideo": {
+    "message": "Video"
+  },
+  "sortByType": {
+    "message": "Sort downloads into folders by type"
+  },
+  "sortByTypeHint": {
+    "message": "Videos, programs, PDFs and other files each go to their own folder."
+  },
+  "typeFolders": {
+    "message": "Download folders"
   }
 }

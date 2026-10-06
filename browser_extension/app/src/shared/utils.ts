@@ -284,7 +284,7 @@ function mediaKindOf(resource: Resource, extension: string): ResourceMediaKind {
   return "";
 }
 
-function visualKindOf({
+export function visualKindOf({
   extension,
   mime,
   parserHint,
