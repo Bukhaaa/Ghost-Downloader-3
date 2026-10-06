@@ -1,7 +1,7 @@
 // The name a page-media download carries. Pages usually title themselves after what's playing,
-// but TikTok's and Instagram's titles stay generic ("TikTok - Make Your Day", "Instagram") whatever
-// video is on screen, so there the clicked video's own caption names it — or its author when it
-// has none.
+// but TikTok's, Instagram's and Facebook's titles stay generic ("TikTok - Make Your Day",
+// "Instagram", "Facebook") whatever video is on screen, so there the clicked video's own caption
+// names it — or its author when it has none.
 export function titleForMedia(media: HTMLVideoElement): string {
   const host = location.hostname;
   if (host === "tiktok.com" || host.endsWith(".tiktok.com")) {
@@ -9,6 +9,9 @@ export function titleForMedia(media: HTMLVideoElement): string {
   }
   if (host === "instagram.com" || host.endsWith(".instagram.com")) {
     return instagramTitle(media) || document.title;
+  }
+  if (host === "facebook.com" || host.endsWith(".facebook.com")) {
+    return facebookTitle(media) || document.title;
   }
   return document.title;
 }
@@ -100,6 +103,38 @@ function instagramMetaCaption(): string {
   if (!shortcode(location.pathname) || shortcode(meta("og:url")) !== shortcode(location.pathname)) { return ""; }
   const quoted = /:\s*"([\s\S]*)$/.exec(meta("og:title"))?.[1] ?? "";
   return quoted.replace(/"\s*$/, "").replace(/\s+/g, " ").trim();
+}
+
+// Counts and times: "37", "1.2K", "0:09 / 0:10", "19h", "265K views".
+const FACEBOOK_COUNT = /^(?=.*\d)[\d.,:/ KMkmwdhs]+$|^[\d.,]+[KMB]?\s+\p{L}+$/u;
+
+// Feed posts mark their caption and author (data-ad-rendering-role). The feed's Reels row and
+// Stories tray show neither, but label the link around each player. Elsewhere they sit unmarked
+// around the player — over it in the Reels viewer, above it in a story's card, below it on the
+// Watch page, which marks only the author: the caption is the first free text after the
+// player, the author the first linked name.
+function facebookTitle(media: HTMLVideoElement): string {
+  const post = media.closest("[aria-posinset]") ?? outermostItem(media);
+  // A reel's player, a story's card.
+  const around = media.closest("[data-video-id], [data-id]") ?? post;
+  return captionOf(post.querySelector('[data-ad-rendering-role="story_message"]'))
+    // "Reel by …", "…'s story"
+    || media.closest("a[aria-label]")?.getAttribute("aria-label")
+    || Array.from(around.querySelectorAll('[dir="auto"]'))
+      .filter((n) => !n.querySelector('[dir="auto"]') && !n.closest('a, [role="button"]')
+        && media.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING)
+      .map(captionOf)
+      .find((text) => /[\p{L}\p{N}]/u.test(text) && !FACEBOOK_COUNT.test(text))
+    || textOf(post.querySelector('[data-ad-rendering-role="profile_name"]'))
+    || Array.from(around.querySelectorAll("a[href]")).map(textOf).find(Boolean)
+    || "";
+}
+
+// A long caption ends in "… See more", a button inside it.
+function captionOf(element: Element | null): string {
+  const text = textOf(element);
+  const more = textOf(element?.querySelector('[role="button"]') ?? null);
+  return (more && text.endsWith(more) ? text.slice(0, -more.length) : text).trim().replace(/\s*(?:…|\.\.\.)$/, "");
 }
 
 function textOf(element: Element | null): string {
